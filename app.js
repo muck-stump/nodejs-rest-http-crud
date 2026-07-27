@@ -29,11 +29,12 @@ const db = require('./lib/db');
 
 const fruits = require('./lib/routes/fruits');
 
-let mcpServer, SSEServerTransport, transports;
+let mcpServer, SSEServerTransport, StreamableHTTPServerTransport, transports;
 try {
   const mcp = require('./lib/mcp');
   mcpServer = mcp.server;
   SSEServerTransport = mcp.SSEServerTransport;
+  StreamableHTTPServerTransport = mcp.StreamableHTTPServerTransport;
   transports = mcp.transports;
   logger.info('MCP module loaded');
 } catch (err) {
@@ -55,7 +56,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', fruits);
 
 // MCP SSE endpoint — clients connect here to receive server-sent events
-if (mcpServer && SSEServerTransport && transports) {
+if (mcpServer && SSEServerTransport && StreamableHTTPServerTransport && transports) {
+  // Legacy SSE transport
   app.get('/mcp/sse', async (request, response) => {
     const transport = new SSEServerTransport('/mcp/messages', response);
     transports[transport.sessionId] = transport;
@@ -75,7 +77,14 @@ if (mcpServer && SSEServerTransport && transports) {
     await transport.handlePostMessage(request, response);
   });
 
-  logger.info('MCP routes registered at /mcp/sse and /mcp/messages');
+  // Streamable HTTP transport (MCP spec 2025-03-26)
+  app.all('/mcp', async (request, response) => {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await mcpServer.connect(transport);
+    await transport.handleRequest(request, response);
+  });
+
+  logger.info('MCP routes registered at /mcp, /mcp/sse and /mcp/messages');
 } else {
   logger.error('MCP routes NOT registered — module failed to load');
 }
