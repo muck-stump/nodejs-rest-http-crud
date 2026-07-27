@@ -29,10 +29,10 @@ const db = require('./lib/db');
 
 const fruits = require('./lib/routes/fruits');
 
-let mcpServer, SSEServerTransport, StreamableHTTPServerTransport, transports;
+let createServer, SSEServerTransport, StreamableHTTPServerTransport, transports;
 try {
   const mcp = require('./lib/mcp');
-  mcpServer = mcp.server;
+  createServer = mcp.createServer;
   SSEServerTransport = mcp.SSEServerTransport;
   StreamableHTTPServerTransport = mcp.StreamableHTTPServerTransport;
   transports = mcp.transports;
@@ -56,15 +56,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', fruits);
 
 // MCP SSE endpoint — clients connect here to receive server-sent events
-if (mcpServer && SSEServerTransport && StreamableHTTPServerTransport && transports) {
-  // Legacy SSE transport
+if (createServer && SSEServerTransport && StreamableHTTPServerTransport && transports) {
+  // Legacy SSE transport — each connection gets its own fresh McpServer instance
   app.get('/mcp/sse', async (request, response) => {
     const transport = new SSEServerTransport('/mcp/messages', response);
     transports[transport.sessionId] = transport;
     response.on('close', () => {
       delete transports[transport.sessionId];
     });
-    await mcpServer.connect(transport);
+    await createServer().connect(transport);
   });
 
   app.post('/mcp/messages', async (request, response) => {
@@ -80,7 +80,7 @@ if (mcpServer && SSEServerTransport && StreamableHTTPServerTransport && transpor
   // Streamable HTTP transport (MCP spec 2025-03-26)
   app.all('/mcp', async (request, response) => {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await mcpServer.connect(transport);
+    await createServer().connect(transport);
     await transport.handleRequest(request, response);
   });
 
