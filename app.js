@@ -28,6 +28,7 @@ const app = express();
 const db = require('./lib/db');
 
 const fruits = require('./lib/routes/fruits');
+const { server: mcpServer, SSEServerTransport, transports } = require('./lib/mcp');
 
 app.use(bodyParser.json());
 app.use((error, request, response, next) => {
@@ -42,6 +43,27 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api', fruits);
+
+// MCP SSE endpoint — clients connect here to receive server-sent events
+app.get('/mcp/sse', async (request, response) => {
+  const transport = new SSEServerTransport('/mcp/messages', response);
+  transports[transport.sessionId] = transport;
+  response.on('close', () => {
+    delete transports[transport.sessionId];
+  });
+  await mcpServer.connect(transport);
+});
+
+// MCP message endpoint — clients POST tool calls here
+app.post('/mcp/messages', async (request, response) => {
+  const sessionId = request.query.sessionId;
+  const transport = transports[sessionId];
+  if (!transport) {
+    response.status(400).send('Unknown session');
+    return;
+  }
+  await transport.handlePostMessage(request, response);
+});
 
 // Add a health check
 app.use('/ready', (request, response) => {
