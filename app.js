@@ -28,7 +28,17 @@ const app = express();
 const db = require('./lib/db');
 
 const fruits = require('./lib/routes/fruits');
-const { server: mcpServer, SSEServerTransport, transports } = require('./lib/mcp');
+
+let mcpServer, SSEServerTransport, transports;
+try {
+  const mcp = require('./lib/mcp');
+  mcpServer = mcp.server;
+  SSEServerTransport = mcp.SSEServerTransport;
+  transports = mcp.transports;
+  logger.info('MCP module loaded');
+} catch (err) {
+  logger.error({ err }, 'Failed to load MCP module');
+}
 
 app.use(bodyParser.json());
 app.use((error, request, response, next) => {
@@ -45,25 +55,30 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', fruits);
 
 // MCP SSE endpoint — clients connect here to receive server-sent events
-app.get('/mcp/sse', async (request, response) => {
-  const transport = new SSEServerTransport('/mcp/messages', response);
-  transports[transport.sessionId] = transport;
-  response.on('close', () => {
-    delete transports[transport.sessionId];
+if (mcpServer && SSEServerTransport && transports) {
+  app.get('/mcp/sse', async (request, response) => {
+    const transport = new SSEServerTransport('/mcp/messages', response);
+    transports[transport.sessionId] = transport;
+    response.on('close', () => {
+      delete transports[transport.sessionId];
+    });
+    await mcpServer.connect(transport);
   });
-  await mcpServer.connect(transport);
-});
 
-// MCP message endpoint — clients POST tool calls here
-app.post('/mcp/messages', async (request, response) => {
-  const sessionId = request.query.sessionId;
-  const transport = transports[sessionId];
-  if (!transport) {
-    response.status(400).send('Unknown session');
-    return;
-  }
-  await transport.handlePostMessage(request, response);
-});
+  app.post('/mcp/messages', async (request, response) => {
+    const sessionId = request.query.sessionId;
+    const transport = transports[sessionId];
+    if (!transport) {
+      response.status(400).send('Unknown session');
+      return;
+    }
+    await transport.handlePostMessage(request, response);
+  });
+
+  logger.info('MCP routes registered at /mcp/sse and /mcp/messages');
+} else {
+  logger.error('MCP routes NOT registered — module failed to load');
+}
 
 // Add a health check
 app.use('/ready', (request, response) => {
